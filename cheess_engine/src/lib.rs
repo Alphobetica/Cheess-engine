@@ -28,36 +28,30 @@ pub const KING: u8 = 15;
 
 pub fn run() {
     let mut game = GameState::new();
-
-    println!("Select Mode");
     
-    
-    // let mut input = String::new();
-    // loop {
-    //     std::io::stdin()
-    //       .read_line(&mut input)
-    //       .expect("Error reading input");
-    //     input = input.trim().to_owned();
-
-    //      
-    // }
-   
-    
-    game.white_timer = game.white_timer + game.timer_increment;
+    //game.white_timer = game.white_timer + game.timer_increment;
 
     get_legal_move_list(&mut game);
 
     let threadpool = ThreadPool::new(2).expect("Error creating threads");
+
     let input_struct = Arc::new(Mutex::new(UserInput { input_queue: VecDeque::new() }));
-    // let _listener = std::thread::spawn(move || {
     let input_ptr = input_struct.clone();
+    
+    let response_struct = Arc::new(Mutex::new(ResponseQueue { res_queue: VecDeque::new() }));
+    let response_ptr = response_struct.clone();
+    
+    game.response_queue = response_struct.clone();
+
+    let game_state_pointer = Arc::new(Mutex::new(game));
+
     threadpool.execute(move || {
-        if let Err(e) = listen(input_ptr) {
+        if let Err(e) = listen(input_ptr, response_ptr) {
             println!("Error with listener thread: {e}");
         }
     });
 
-
+    
     'game_mode: loop {
         std::thread::sleep(Duration::from_millis(2000));
         // println!("gimme da mode ");
@@ -65,15 +59,14 @@ pub fn run() {
             println!("Client input: {:?}", input);
             match input {
                 InputType::Exit => {
-                    
                     return
                 },
                 InputType::GameMode(mode) => {
                     match mode {
-                        GameMode::Default => game.mode = GameMode::Default,
-                        GameMode::Blitz => game.mode = GameMode::Blitz,
+                        GameMode::Default => game_state_pointer.lock().unwrap().mode = GameMode::Default,
+                        GameMode::Blitz => game_state_pointer.lock().unwrap().mode = GameMode::Blitz,
                     }
-                    println!("Mode selected: {:?}", game.mode);
+                    
                     break 'game_mode;
                 },
                 _ => {},
@@ -82,23 +75,18 @@ pub fn run() {
     }
     
     let mut event_loop = gameloop::Dispatcher::new(&threadpool);
-    let game_state_pointer = Arc::new(Mutex::new(game));
-    
-    
+
     event_loop.register_handler(Event::UserInput, input_struct.clone());
     event_loop.register_handler(Event::MoveInput, game_state_pointer.clone());
-
-
+    
     event_loop.start();    
     
     'main_loop: loop {
-        std::thread::sleep(std::time::Duration::from_millis(40)); 
+        std::thread::sleep(std::time::Duration::from_millis(40));
         if game_state_pointer.lock().unwrap().game_over {
             println!("Game Over");
             break 'main_loop
         }
-        
-        
 
         // probably should be async
         event_loop.trigger_event(Event::UserInput, Vec::new());
@@ -130,6 +118,8 @@ pub fn run() {
                         event_loop.trigger_event(Event::MoveInput, payload);
                     } else if let Some(payload) = parse_payload_from_coordinates(&move_string) {
                         event_loop.trigger_event(Event::MoveInput, payload);
+                    } else {
+                        response_struct.lock().unwrap().res_queue.push_front(ServerResponse::Error(MoveError::BadParse));
                     }
                 },
             }
@@ -164,6 +154,7 @@ pub struct GameState {
     pub timer_increment : std::time::Duration,
     pub mode: GameMode,
     pub game_over: bool,
+    pub response_queue: Arc<Mutex<ResponseQueue>>,
     //fide rules set time to 50minutes after 40 moves etc... pub move_count_time_added: ((u8, Duration), (u8, Duration))
     //reversable table state check
 }
@@ -173,7 +164,6 @@ pub enum GameMode {
     Default,
     Blitz,
 }
-
 
 
 impl gameloop::Handler for GameState {
@@ -190,15 +180,20 @@ impl gameloop::Handler for GameState {
             },
             _ => panic!("Player_turn wrong"),
         };
+        
         if valid_move {
             self.update_chess_clock();
             take_turn(self, translation);
+            //send board, timers, game end, player turn
+            self.response_queue.lock().expect("Panic on response queue lock").res_queue.push_front(ServerResponse::Response(self.generate_response()));
         } else {
-            println!("Not in move list")
+            println!("Not in move list");
+            //send error
+            self.response_queue.lock().unwrap().res_queue.push_front(ServerResponse::Error(MoveError::InvalidMove));
         }
-        
     }
 }
+
 impl GameState {
     pub fn new() -> Self {
         GameState {
@@ -224,6 +219,7 @@ impl GameState {
             timer_increment: Duration::from_secs(30),
             mode: GameMode::Default,
             game_over: false,
+            response_queue: Arc::new(Mutex::new(ResponseQueue { res_queue: VecDeque::new() }))
         }       
     }
     // allow people to choose mode, blitz/default, can add more later.
@@ -268,6 +264,23 @@ impl GameState {
         }
     }
 
+    pub fn generate_response(&self) -> Response {
+       Response {
+			board: boardrep_to_bitboard(&self.board),
+			timer_white: self.white_timer,
+			timer_black: self.black_timer,
+			player_turn: self.player_turn,
+			game_end: self.game_over,
+        }
+    }
+
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum MoveError {
+    InvalidMove,
+    //piece cant move that way, not your piece, nothing on origin, would place you in check, castleing disabled 
+    BadParse,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1368,8 +1381,6 @@ pub fn take_turn(state: &mut GameState, translation: Move) {
         }
     }
     
-
-
     // pawn promotion
     let is_pawn = premove_board.0[usize::from(translation.0)] == PAWN;
     if is_pawn && (translation.1.y == 0 || translation.1.y == 7) {
@@ -1388,7 +1399,6 @@ pub fn take_turn(state: &mut GameState, translation: Move) {
         state.table_states_since_last_capture_or_pawn_move.push(boardrep_to_bitboard(&state.board.clone()));
     }
     
-
     //if king or kingside rook moves, state.colour.can kinside castle = false
     King::check_to_disable_castling(state);
     //en passant logic: black pawn on y= 6 moving to y=4, white pawn on y=4 takes y = 5 where x is +1 or -1 not between
@@ -1403,7 +1413,6 @@ pub fn take_turn(state: &mut GameState, translation: Move) {
         2 => state.black_in_check = false,
         _ => panic!("Invalid player turn number"),
     }
-    
     
     get_legal_move_list(state);
     
@@ -1422,14 +1431,15 @@ pub fn take_turn(state: &mut GameState, translation: Move) {
         2 => state.white_timer += state.timer_increment,
         _ => panic!("Player turn is not 1(white) or 2(black)"),
     }
+    
     //change player turn
     if state.player_turn == 1 {
         state.player_turn = 2
     } else {
         state.player_turn = 1
     }
-    //fantastic GUI
-    println!("{:?}, player turn {:?}, White clock {:?}, Black clock {:?}, Is white in check {:?}, Is black in check {:?}", state.board, state.player_turn, state.white_timer, state.black_timer, state.white_in_check, state.black_in_check )
+    //fantastic GUI longest line
+    // println!("{:?}, player turn {:?}, White clock {:?}, Black clock {:?}, Is white in check {:?}, Is black in check {:?}", state.board, state.player_turn, state.white_timer, state.black_timer, state.white_in_check, state.black_in_check )
 }
 
 #[derive(Debug)]

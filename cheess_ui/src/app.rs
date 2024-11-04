@@ -1,13 +1,15 @@
 use egui::{self};
-use std::{string, time::{Duration, Instant}};
+use std::time::{Duration, Instant};
 use interprocess::local_socket::{prelude::*, GenericFilePath, GenericNamespaced, Stream};
 use std::io::{prelude::*, BufReader};
 use serde;
-use cheess::{GameMode, BitBoard};
+use cheess::{GameMode, BitBoard, POSITION_BITMASK, Coordinates, ROOK, QUEEN, KING, PAWN, KNIGHT, BISHOP, EMPTY, PieceColour::White, PieceColour::Black, PieceColour::Empty, ServerResponse};
 
-const FIGURES: [&str; 13] = [
-    "♚", "♛", "♜", "♝", "♞", "♟", "", "♙", "♘", "♗", "♖", "♕", "♔",
-];
+// const FIGURES: [&str; 13] = [
+//     "♚", "♛", "♜", "♝", "♞", "♟", "", "♙", "♘", "♗", "♖", "♕", "♔",
+// ];
+const FIGURES: [[&str; 6]; 2] = [
+ ["♙", "♗", "♘", "♖", "♕", "♔"], [ "♟", "♝", "♞", "♜", "♛", "♚"]];
 
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -24,6 +26,11 @@ pub struct ChessApp {
     black_timer: Duration,
     #[serde(skip_serializing, skip_deserializing)]
     timer: Option<Instant>,
+    #[serde(skip_serializing, skip_deserializing)]
+    colour_turn: bool,
+    #[serde(skip_serializing, skip_deserializing)]
+    board: BitBoard,
+    
 }
 
 impl Default for ChessApp {
@@ -35,6 +42,8 @@ impl Default for ChessApp {
             white_timer: Duration::from_secs(300),
             black_timer: Duration::from_secs(300),
             timer: None,
+            colour_turn: true,
+            board: BitBoard::default(), 
         }
     }
 }
@@ -50,7 +59,6 @@ impl ChessApp {
         if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
-
         Default::default()
     }
 
@@ -76,8 +84,12 @@ impl ChessApp {
     pub fn update_timer(&mut self) {
         let time_difference = self.timer.expect("timer was none when game opened").elapsed();
         self.timer = Some(Instant::now());
-        self.white_timer = self.white_timer.saturating_sub(time_difference);
-        self.black_timer = self.black_timer.saturating_sub(time_difference);
+        if self.colour_turn {
+            self.white_timer = self.white_timer.saturating_sub(time_difference);
+        } else {
+            self.black_timer = self.black_timer.saturating_sub(time_difference);
+        }
+        
         //recieve clock black and white from seperate thread to update visible clock
     }
 }
@@ -161,7 +173,7 @@ impl eframe::App for ChessApp {
             // The central panel the region left after adding TopPanel's and SidePanel's
             egui::TopBottomPanel::top("board").min_height(400.0).show(&ctx, |ui| {
                 ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
-                    draw_board(ui);
+                    draw_board(ui, self.board);
                 });
             });
             egui::CentralPanel::default().show(&ctx ,|ui| {
@@ -182,8 +194,17 @@ impl eframe::App for ChessApp {
                 ui.label("Input '(Origin: x, y) (Destination: x, y)' : ");
                 ui.text_edit_singleline(&mut self.label);
                 if ui.button("enter").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Err(e) = send_move(&self.label, ctx) {
-                        eprintln!("Error sending move: {e}");
+                    match send_move(&self.label, ctx) {
+                        Ok(server_message) => {
+                            match server_message {
+                                ServerResponse::Response(response) => {
+                                    self.board = response.board
+
+                                },
+                                ServerResponse::Error(e) => {},
+                            }
+                        },
+                        Err(e) => eprintln!("Error sending move: {e}"),
                     }
                 }
             });
@@ -207,7 +228,7 @@ impl eframe::App for ChessApp {
 }
 
 
-fn backend_post(data: &[u8]) -> std::io::Result<String> {
+fn backend_post(data: &[u8]) -> std::io::Result<ServerResponse> {
     //send move to back end and update the visuals
     let name = if GenericNamespaced::is_supported() {
         "cheess.sock".to_ns_name::<GenericNamespaced>()?
@@ -219,10 +240,14 @@ fn backend_post(data: &[u8]) -> std::io::Result<String> {
     let conn = Stream::connect(name)?;
     let mut conn = BufReader::new(conn);
     conn.get_mut().write_all(data)?;
+
     conn.read_line(&mut buffer)?;
-    println!("{buffer}");
+    
+    
+    // println!("{buffer}");
+    let backend_data: ServerResponse = serde_json::from_str(&buffer)?;
     // blocks until message sent or error
-    Ok(buffer)
+    Ok(backend_data)
 }
 
     
@@ -233,15 +258,15 @@ fn send_mode(mode: GameMode) -> std::io::Result<()> {
     Ok(())
 }
 // we wanna send game mode, and moves nothing else needs to be sent
-fn send_move(input: &str, ctx: &egui::Context) -> std::io::Result<()> {
+fn send_move(input: &str, ctx: &egui::Context) -> std::io::Result<ServerResponse> {
     let mut line = input.to_string().into_bytes();
     line.push(b'\n');
-    let _res = backend_post(&line)?;
+    let res = backend_post(&line)?;
 
     if input == "exit" {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
-    Ok(())
+    Ok(res)
 }
 
 fn resign() ->std::io::Result<()> {
@@ -253,7 +278,7 @@ fn resign() ->std::io::Result<()> {
 }
 
 
-fn draw_board(ui: &mut egui::Ui) {
+fn draw_board(ui: &mut egui::Ui, bitboard: BitBoard) {
     let available_size = ui.available_size();
     let central_panel_rect = ui.min_rect();
     let center_x = central_panel_rect.center().x;
@@ -288,9 +313,76 @@ fn draw_board(ui: &mut egui::Ui) {
     
     let painter = ui.painter();
     for (rect, color, col, row) in responses {
+        let index = usize::from(Coordinates { x: col, y: row});
+        let square_mask = POSITION_BITMASK[index];
+
+        let piece = if bitboard[0] & square_mask == square_mask {
+            ROOK
+        } else if bitboard[1] & square_mask == square_mask {
+            KNIGHT
+        } else if bitboard[2] & square_mask == square_mask {
+            BISHOP
+        } else if bitboard[3] & square_mask == square_mask {
+            QUEEN
+        } else if bitboard[4] & square_mask == square_mask {
+            KING
+        } else if bitboard[5] & square_mask == square_mask {
+            PAWN
+        } else {
+            EMPTY
+        };
+        
+        let colour = if bitboard[6] & square_mask == square_mask {
+            White
+        } else if bitboard[7] & square_mask == square_mask {
+            Black
+        } else {
+            Empty
+        };
+
+        let painted_piece = 
+            if colour == White {
+                let piece: usize = 
+                if piece == PAWN {
+                    0
+                } else if piece == BISHOP {
+                    1
+                } else if piece == KNIGHT {
+                    2
+                } else if piece == ROOK {
+                    3
+                } else if piece == QUEEN {
+                    4
+                } else {
+                    5
+                };
+                FIGURES[0][piece]
+            } else if colour == Black {
+                let piece: usize = 
+                if piece == PAWN {
+                    0
+                } else if piece == BISHOP {
+                    1
+                } else if piece == KNIGHT {
+                    2
+                } else if piece == ROOK {
+                    3
+                } else if piece == QUEEN {
+                    4
+                } else {
+                    5
+                };
+                
+                FIGURES[1][piece]
+            } else {
+                ""
+            };
+
+        
+        
         painter.rect_filled(rect, 0.0, color);
         let text_pos = rect.center();
-        let piece = FIGURES[5 as usize];
+        let piece = painted_piece;
                 painter.text(
                     text_pos,
                     egui::Align2::CENTER_CENTER,
@@ -325,7 +417,7 @@ fn new_game() -> std::io::Result<()> {
 fn exit(ctx: &egui::Context) -> std::io::Result<()> {
     let mut line = "exit".to_string().into_bytes();
     line.push(b'\n');
-    let _res = backend_post(&line)?;
+    let _res = backend_post(&line);
     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     Ok(())
 }

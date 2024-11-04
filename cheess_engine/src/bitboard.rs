@@ -1,7 +1,47 @@
+use std::ops::Index;
 use crate::{BoardRep, PieceColour};
 use crate::{ROOK, KNIGHT, BISHOP, QUEEN, KING, PAWN};
 
-pub type BitBoard = [u64; 8];
+// pub type BitBoard = [u64; 8];
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct BitBoard(pub [u64; 8]);
+impl Default for BitBoard {
+    fn default() -> Self {
+    BitBoard (
+            [
+            // Rook
+            0b10000001_00000000_00000000_00000000_00000000_00000000_00000000_10000001,
+            // Knight
+            0b01000010_00000000_00000000_00000000_00000000_00000000_00000000_01000010,
+            // Bishop
+            0b00100100_00000000_00000000_00000000_00000000_00000000_00000000_00100100,
+            // Queen
+            0b00010000_00000000_00000000_00000000_00000000_00000000_00000000_00010000,
+            // King
+            0b00001000_00000000_00000000_00000000_00000000_00000000_00000000_00001000,
+            // Pawn
+            0b00000000_11111111_00000000_00000000_00000000_00000000_11111111_00000000,
+            // White Pieces
+            0b00000000_00000000_00000000_00000000_00000000_00000000_11111111_11111111,
+            // Black Pieces
+            0b11111111_11111111_00000000_00000000_00000000_00000000_00000000_00000000,
+            ]
+        )
+    }
+}
+
+impl PartialEq for BitBoard {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Index<usize> for BitBoard {
+    type Output = u64;
+    fn index(&self, idx: usize) -> &Self::Output {
+        &self.0[idx]
+    }
+}
 
 pub fn boardrep_to_bitboard (board: &BoardRep) -> BitBoard {
   let mut bitboard: [u64; 8] = [0; 8];
@@ -33,14 +73,14 @@ pub fn boardrep_to_bitboard (board: &BoardRep) -> BitBoard {
         continue;
     }
   }
-  bitboard
+  BitBoard(bitboard)
 
 }
 pub fn bitboard_to_boardrep(bitboard: &BitBoard) -> BoardRep {
     let mut piece_board: Vec<u8> = vec![0; 64];
     let mut colour_board: Vec<PieceColour> = vec![PieceColour::Empty; 64];
 
-    for (index, board) in bitboard.iter().enumerate() {
+    for (index, board) in bitboard.0.iter().enumerate() {
         for (square, mask) in POSITION_BITMASK.iter().enumerate() {
             match index {
                 0 => {
@@ -94,7 +134,7 @@ pub fn bitboard_to_boardrep(bitboard: &BitBoard) -> BoardRep {
 
 
 
-const POSITION_BITMASK: [u64; 64] = [
+pub const POSITION_BITMASK: [u64; 64] = [
   0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000001,
   0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000010,
   0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000100,

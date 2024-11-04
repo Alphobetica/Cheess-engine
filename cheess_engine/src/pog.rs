@@ -1,7 +1,7 @@
 use cheess::*;
 use cheess::PieceColour::*;
 use std::time::Duration;
-
+use std::{collections::VecDeque, sync::{Arc, Mutex}};
 
 
 const EMPTY: u8 = 0;
@@ -81,6 +81,7 @@ let mut state: GameState = GameState {
   timer_increment: Duration::from_secs(30),
   mode: GameMode::Default,
   game_over: false,
+  response_queue: Arc::new(Mutex::new(ResponseQueue { res_queue: VecDeque::new() })),
 };
 
 let translation = (Coordinates {x: 1, y: 0}, Coordinates { x: 2, y: 2});
