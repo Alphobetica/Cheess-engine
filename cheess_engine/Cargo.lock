@@ -15,7 +15,6 @@ dependencies = [
  "futures",
  "interprocess",
  "serde",
- "serde-jsonlines",
  "serde_json",
  "serde_repr",
 ]
@@ -195,16 +194,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8e3592472072e6e22e0a54d5904d9febf8508f65fb8552499a1abc7d1078c3a"
 dependencies = [
  "serde_derive",
-]
-
-[[package]]
-name = "serde-jsonlines"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07bdd6db666f827c1843d4710520093675e6c0b6e39a02e1a8d9e9b2f71cbb58"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

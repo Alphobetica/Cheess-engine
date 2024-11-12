@@ -3,9 +3,10 @@ mod input;
 mod threadpool;
 mod bitboard;
 mod listener;
+mod ai;
 
 use std::time::Duration;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc::{Sender, Receiver, channel}};
 use std::ops::{Index, IndexMut};
 use std::collections::VecDeque;
 
@@ -25,9 +26,10 @@ pub const ROOK: u8 = 11;
 pub const QUEEN: u8 = 14;
 pub const KING: u8 = 15;
 
-
 pub fn run() {
-    let mut game = GameState::new();
+    let (tx, rx) = channel();
+    let res_queue = Arc::new(Mutex::new(ResponseQueue { res_queue: VecDeque::new() }));
+    let mut game = GameState::new(Arc::new(Mutex::new(rx)), res_queue);
     
     //game.white_timer = game.white_timer + game.timer_increment;
 
@@ -45,8 +47,9 @@ pub fn run() {
 
     let game_state_pointer = Arc::new(Mutex::new(game));
 
+
     threadpool.execute(move || {
-        if let Err(e) = listen(input_ptr, response_ptr) {
+        if let Err(e) = listen(input_ptr, response_ptr, tx) {
             println!("Error with listener thread: {e}");
         }
     });
@@ -72,8 +75,8 @@ pub fn run() {
                 _ => {},
             }
         }
+        
     }
-    
     let mut event_loop = gameloop::Dispatcher::new(&threadpool);
 
     event_loop.register_handler(Event::UserInput, input_struct.clone());
@@ -95,6 +98,7 @@ pub fn run() {
         // should be .join() with threadpool
 
         while let Some(input) = input_struct.lock().unwrap().input_queue.pop_front() {
+            std::thread::sleep(Duration::from_millis(20));
             //Commands list
             match input {
                 InputType::Exit => return,
@@ -111,7 +115,11 @@ pub fn run() {
                     }
                 },
                 InputType::Reset => {
-                    game_state_pointer.lock().unwrap().reset();
+                    let mut game = game_state_pointer.lock().unwrap();
+                    game.reset();
+                    let res = game.generate_response();
+                    println!("{:?}", res);
+                    game.response_queue.lock().unwrap().res_queue.push_front(ServerResponse::Response(res));   
                 },
                 InputType::Move(move_string) => {
                     if let Ok(payload) = parse_payload_from_index(&move_string) {
@@ -155,6 +163,7 @@ pub struct GameState {
     pub mode: GameMode,
     pub game_over: bool,
     pub response_queue: Arc<Mutex<ResponseQueue>>,
+    pub promotion_channel: Arc<Mutex<Receiver<String>>>,
     //fide rules set time to 50minutes after 40 moves etc... pub move_count_time_added: ((u8, Duration), (u8, Duration))
     //reversable table state check
 }
@@ -195,11 +204,12 @@ impl gameloop::Handler for GameState {
 }
 
 impl GameState {
-    pub fn new() -> Self {
+    pub fn new(rx: Arc<Mutex<Receiver<String>>>, res_queue: Arc<Mutex<ResponseQueue>>) -> Self {
         GameState {
             board: generate_start_board(),
             move_list: PlayerValidMoves{ black: MoveList::new(), white: MoveList::new()},
             last_move: None,
+            //why the hell is VthisV not a bool
             player_turn: 1,     //when white takes turn add 1 when black takes turn -1
             white_can_castle_queenside: true,
             black_can_castle_queenside: true,
@@ -219,8 +229,9 @@ impl GameState {
             timer_increment: Duration::from_secs(30),
             mode: GameMode::Default,
             game_over: false,
-            response_queue: Arc::new(Mutex::new(ResponseQueue { res_queue: VecDeque::new() }))
-        }       
+            response_queue: res_queue,
+            promotion_channel: rx,
+        }
     }
     // allow people to choose mode, blitz/default, can add more later.
     pub fn blitz_mode(&mut self) {
@@ -230,15 +241,20 @@ impl GameState {
         self.mode = GameMode::Blitz;
     }
 
-    pub fn reset (&mut self) {
+    pub fn reset(&mut self) {
         let mode = self.mode;
-        *self = GameState::new();
+        let rx = self.promotion_channel.clone();
+        while let Ok(_) = rx.lock().unwrap().try_recv() {}
+        let res_queue = self.response_queue.clone();
+        res_queue.lock().unwrap().res_queue.clear();
+        *self = GameState::new(rx, res_queue);
         if let GameMode::Blitz = mode {
             self.blitz_mode();
         } 
         self.white_timer = self.white_timer + self.timer_increment;
         get_legal_move_list(self);
     }
+
 
     pub fn update_chess_clock(&mut self) {
         match self.player_turn {
@@ -271,6 +287,7 @@ impl GameState {
 			timer_black: self.black_timer,
 			player_turn: self.player_turn,
 			game_end: self.game_over,
+            promotion_required: false,
         }
     }
 
@@ -326,27 +343,51 @@ impl IndexMut<usize> for PieceSet {
     }
 }
 
+// fn generate_start_board() -> BoardRep {
+//     let piece_type = vec![
+//         ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
+//         PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
+//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+//         PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
+//         ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
+//     ];
+//     let piece_colour = vec![
+//         //why the hell is white 1 and black 0?
+//         White, White, White, White, White, White, White, White,
+//         White, White, White, White, White, White, White, White,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Black, Black, Black, Black, Black, Black, Black, Black,
+//         Black, Black, Black, Black, Black, Black, Black, Black];
 
+//     (piece_type, piece_colour)    
+// }
 fn generate_start_board() -> BoardRep {
     let piece_type = vec![
-        ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
-        PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
-        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-        PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
-        ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, KING,  QUEEN, EMPTY,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+        EMPTY, EMPTY, EMPTY, PAWN,  EMPTY, EMPTY, EMPTY, EMPTY,
+        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, KING,  QUEEN, EMPTY,
     ];
     let piece_colour = vec![
-        White, White, White, White, White, White, White, White,
-        White, White, White, White, White, White, White, White,
+        //why the hell is white 1 and black 0?
+        Empty, Empty, Empty, Empty, Empty, White, White, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-        Black, Black, Black, Black, Black, Black, Black, Black,
-        Black, Black, Black, Black, Black, Black, Black, Black];
+        Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+        Empty, Empty, Empty, White, Empty, Empty, Empty, Empty,
+        Empty, Empty, Empty, Empty, Empty, Black, Black, Empty];
 
     (piece_type, piece_colour)    
 }
@@ -773,7 +814,7 @@ impl Pawn {
 
     pub fn pawn_promotion (destination: Coordinates, state: &mut GameState) {
         //if pawn is on y of 0 or y of 7 after it moves, it promotes to one of the options
-        let promotion_choice = Pawn::get_promotion_choice();
+        let promotion_choice = Pawn::get_promotion_choice(state);
         if state.player_turn == 1 {
             match promotion_choice {
                 KNIGHT => state.white_pieces.knight += 1,
@@ -793,33 +834,48 @@ impl Pawn {
             }
         }
         state.board.0[usize::from(destination)] = promotion_choice;
+        
+        // let res = state.generate_response();
+        // state.response_queue.lock().unwrap().res_queue.push_front(ServerResponse::Response(res));
     }
     
-    pub fn get_promotion_choice() -> u8 {
+    pub fn get_promotion_choice(game: &mut GameState) -> u8 {
         let promotion_possibilities = [ROOK, KNIGHT, BISHOP, QUEEN];
-        let mut input = String::new();
-        println!("Choose piece to promote to");
+        // send promotion request to frontend
+        let mut res = game.generate_response();
+        res.promotion_required = true;
+            
+        game.response_queue.lock().unwrap().res_queue.push_front(ServerResponse::Response(res));
         loop {
-            std::io::stdin()
-                .read_line(&mut input)
-                .expect("Error reading input");
+            std::thread::sleep(Duration::from_millis(500));
+            let rx = game.promotion_channel.lock().unwrap();
+            if let Ok(input) = rx.recv() {
+                let choice: u8 = match input.to_lowercase().trim() {
+                    // does not matter what it returns, but has to be a valid u8 from QUEEN ROOK BISHOP KNIGHT
+                    "reset" => return QUEEN,
+                    "rook" => ROOK,
+                    "knight" => KNIGHT,
+                    "bishop" => BISHOP,
+                    "queen" => QUEEN,
+                    _ => {
+                        println!("Invalid piecetype");
+                        0
+                    },
+                };
+                
+                if promotion_possibilities.contains(&choice) {
+                    while let Ok(_) = rx.try_recv() {}
+                    break choice;
 
-            let choice: u8 = match input.to_lowercase().trim() {
-                "rook" => ROOK,
-                "knight" => KNIGHT,
-                "bishop" => BISHOP,
-                "queen" => QUEEN,
-                _ => {
-                    println!("Invalid piecetype");
-                    0
-                },
-            };
-            if promotion_possibilities.contains(&choice) {
-                break choice;
-            } else {
-                println!("Not a valid pawn promotion choice");
-                input.clear();
+                } else {
+                    let mut res = game.generate_response();
+                    res.promotion_required = true;
+                    game.response_queue.lock().unwrap().res_queue.push_front(ServerResponse::Response(res));
+                    println!("Not a valid pawn promotion choice");
+                }
             }
+            // until frontend promotion choice
+            
         }
         
     }
@@ -929,6 +985,7 @@ impl King {
         move_list.append(&mut diagonal_moves);
 
         
+        
         let directions: Vec<MoveDirection> = vec![MoveDirection::North, MoveDirection::South, MoveDirection::East, MoveDirection::West, MoveDirection::NorthEast, MoveDirection::NorthWest, MoveDirection::SouthEast, MoveDirection::SouthWest];
             for direction in directions {
                 let mut directional_move_list = separate_direction_from_movelist(&move_list, direction.clone());
@@ -949,13 +1006,16 @@ impl King {
     //needs to check if its in the opposing colour movelist or will be for a next turn based on piece movement
 
     pub fn check_checker(state: &mut GameState, move_list: MoveList) -> bool {
-        // if king position is in movelist, player of king colour is in check.s
+        // if king position is in movelist, player of king colour is in check.
+        if move_list.is_empty() {
+            return true;
+        }
         let first_move = move_list[0];
         let first_move_origin = first_move.0;
         let colour_of_moves = state.board.1[usize::from(first_move_origin)];
         
 
-        // loop through board look for king and check if check
+        // loop through board look for king and check if checklen
         for i in 0..state.board.0.len() {
             let piece = state.board.0[i];
             let king_colour = state.board.1[i];
