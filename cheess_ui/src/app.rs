@@ -11,7 +11,6 @@ use cheess::{GameMode, BitBoard, POSITION_BITMASK, Coordinates, ROOK, QUEEN, KIN
 const FIGURES: [[&str; 6]; 2] = [
  ["♙", "♗", "♘", "♖",  "♕", "♔"], [ "♟", "♝", "♞", "♜", "♛", "♚"]];
 
-
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -113,7 +112,6 @@ impl ChessApp {
     
             },
             ServerResponse::Error(e) => eprintln!("{:?}", e),
-    
         }
     }
 }
@@ -195,100 +193,90 @@ impl eframe::App for ChessApp {
             }
         }*/
         } else {
-
-
-
-        
-        // egui::CentralPanel::default().show(&ctx, |ui| {
+            // egui::CentralPanel::default().show(&ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            egui::TopBottomPanel::top("board").min_height(400.0).show(&ctx, |ui| {
-                ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
-                    draw_board(ui, self.board, &mut self.clicked_vec);
+                egui::TopBottomPanel::top("board").min_height(400.0).show(&ctx, |ui| {
+                    ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
+                        draw_board(ui, self.board, &mut self.clicked_vec);
+                    });
                 });
-            });
-            egui::CentralPanel::default().show(&ctx ,|ui| {
-            ui.heading("Where my moves at?");
-            //Turn clock goes here
-            ui.horizontal(|ui| {
-                self.update_timer();
-                ui.label("Move Clock");
-                ui.label(
-                    format!(
-                        "White: {:.0?} : Black: {:.0?}",
-                        self.white_timer,
-                        self.black_timer,
-                    )
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label("Input '(Origin: x, y) (Destination: x, y)' : ");
-                ui.text_edit_singleline(&mut self.label);
-                if ui.button("enter").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    match send_move(&self.label, ctx) {
-                        Ok(server_message) => {
-                            self.update_state_with_res(server_message);
-                        },
-                        Err(e) => eprintln!("Error sending move: {e}"),
-                    }
-                    
-                    self.clicked_vec.clear();
-                    self.label = "".to_string();
-                    ui.ctx().request_repaint();
-                }
-            });
-            if self.promotion_required {
-                ui.heading("Select Pawn Promotion");
+                egui::CentralPanel::default().show(&ctx ,|ui| {
+                ui.heading("Where my moves at?");
+                //Turn clock goes here
                 ui.horizontal(|ui| {
-                    if ui.button("Rook").clicked() {
-                        match send_promotion("Rook") {
-                            Ok(res) => self.update_state_with_res(res),
-                            Err(e) => eprintln!("{:?}", e),
-                        }
-                    };
-                    if ui.button("Knight").clicked() {
-                        match send_promotion("Knight") {
-                            Ok(res) => self.update_state_with_res(res),
-                            Err(e) => eprintln!("{:?}", e),
-                        }
-                    };
-                    if ui.button("Bishop").clicked() {
-                        match send_promotion("Bishop") {
-                            Ok(res) => self.update_state_with_res(res),
-                            Err(e) => eprintln!("{:?}", e),
-                        }
-                    };
-                    if ui.button("Queen").clicked() {
-                        match send_promotion("Queen") {
-                            Ok(res) => self.update_state_with_res(res),
-                            Err(e) => eprintln!("{:?}", e),
-                        }
-                    };
+                    self.update_timer();
+                    ui.label("Move Clock");
+                    ui.label(
+                        format!(
+                            "White: {:.0?} : Black: {:.0?}",
+                            self.white_timer,
+                            self.black_timer,
+                        )
+                    );
                 });
-            }
+                ui.horizontal(|ui| {
+                    ui.label("Input '(Origin: x, y) (Destination: x, y)' : ");
+                    ui.text_edit_singleline(&mut self.label);
+                    if ui.button("enter").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        match send_move(&self.label, ctx) {
+                            Ok(server_message) => {
+                                self.update_state_with_res(server_message);
+                            },
+                            Err(e) => eprintln!("Error sending move: {e}"),
+                        }
 
-            
-            ui.separator();
-            ui.add_space(16.0);
-
-            // send clicked moves
-            if self.clicked_vec.len() > 1 {
-                let mut click_str: Vec<String> = Vec::new();
-                for coords in &self.clicked_vec {
-                    let str = std::fmt::format(format_args!("({},{})", coords.x, coords.y));
-                    click_str.push(str);
+                        self.clicked_vec.clear();
+                        self.label = "".to_string();
+                        ui.ctx().request_repaint();
+                    }
+                });
+                if self.promotion_required {
+                    ui.heading("Select Pawn Promotion");
+                    ui.horizontal(|ui| {
+                        if ui.button("Rook").clicked() {
+                            match send_promotion("Rook") {
+                                Ok(res) => self.update_state_with_res(res),
+                                Err(e) => eprintln!("{:?}", e),
+                            }
+                        };
+                        if ui.button("Knight").clicked() {
+                            match send_promotion("Knight") {
+                                Ok(res) => self.update_state_with_res(res),
+                                Err(e) => eprintln!("{:?}", e),
+                            }
+                        };
+                        if ui.button("Bishop").clicked() {
+                            match send_promotion("Bishop") {
+                                Ok(res) => self.update_state_with_res(res),
+                                Err(e) => eprintln!("{:?}", e),
+                            }
+                        };
+                        if ui.button("Queen").clicked() {
+                            match send_promotion("Queen") {
+                                Ok(res) => self.update_state_with_res(res),
+                                Err(e) => eprintln!("{:?}", e),
+                            }
+                        };
+                    });
                 }
-                self.label = click_str.join(" ");
-            }
+                ui.separator();
+                ui.add_space(16.0);
 
-
-            ui.ctx().request_repaint_after_secs(1.0);
-        
-        });
-    };
+                // send clicked moves
+                if self.clicked_vec.len() > 1 {
+                    let mut click_str: Vec<String> = Vec::new();
+                    for coords in &self.clicked_vec {
+                        let str = std::fmt::format(format_args!("({},{})", coords.x, coords.y));
+                        click_str.push(str);
+                    }
+                    self.label = click_str.join(" ");
+                }
+                ui.ctx().request_repaint_after_secs(1.0);
+            
+            });
+        };
     }
 }
-
-
 
 fn backend_post(data: &[u8]) -> std::io::Result<ServerResponse> {
     //send move to back end and update the visuals
@@ -304,7 +292,6 @@ fn backend_post(data: &[u8]) -> std::io::Result<ServerResponse> {
     conn.get_mut().write_all(data)?;
 
     conn.read_line(&mut buffer)?;
-    
     
     // println!("{buffer}");
     let backend_data: ServerResponse = serde_json::from_str(&buffer)?;
@@ -345,7 +332,6 @@ fn resign() -> std::io::Result<()> {
     Ok(())
 }
 
-
 fn draw_board(ui: &mut egui::Ui, bitboard: BitBoard, moves: &mut Vec<Coordinates>) {
     let available_size = ui.available_size();
     let central_panel_rect = ui.min_rect();
@@ -358,7 +344,6 @@ fn draw_board(ui: &mut egui::Ui, bitboard: BitBoard, moves: &mut Vec<Coordinates
         y: center_y - (4.0 * square_size),
     };
     let mut responses = Vec::new();
-
 
     for row in 0..8 {
         for col in 0..8 {
@@ -385,15 +370,12 @@ fn draw_board(ui: &mut egui::Ui, bitboard: BitBoard, moves: &mut Vec<Coordinates
             let x = col as i8;
             let y = row as i8;
             
-
             if moves.len() < 2 {
                 moves.push(Coordinates { x: x as usize, y: y as usize });
             } else {
                 moves.clear();
                 moves.push(Coordinates { x: x as usize, y: y as usize});
             }
-
-
         }
         let index = usize::from(Coordinates { x: col, y: row});
         let square_mask = POSITION_BITMASK[index];
@@ -460,8 +442,6 @@ fn draw_board(ui: &mut egui::Ui, bitboard: BitBoard, moves: &mut Vec<Coordinates
                 ""
             };
 
-        
-        
         painter.rect_filled(rect, 0.0, color);
         let text_pos = rect.center();
         let piece = painted_piece;
@@ -491,7 +471,6 @@ fn tile_highlight(highlight: Vec<Coordinates>) -> egui::Color32  {
     todo!()
     //highlight.0.x
 }
-
 
 fn new_game() -> std::io::Result<ServerResponse> {
     //run newgame creation on back end and update visuals

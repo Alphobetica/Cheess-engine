@@ -15,6 +15,7 @@ pub use input::*;
 pub use threadpool::*;
 pub use bitboard::*;
 pub use listener::*;
+use ai::*;
 
 use crate::PieceColour::*;
 
@@ -30,10 +31,12 @@ pub fn run() {
     let (tx, rx) = channel();
     let res_queue = Arc::new(Mutex::new(ResponseQueue { res_queue: VecDeque::new() }));
     let mut game = GameState::new(Arc::new(Mutex::new(rx)), res_queue);
+
     
     //game.white_timer = game.white_timer + game.timer_increment;
-
+    
     get_legal_move_list(&mut game);
+
 
     let threadpool = ThreadPool::new(2).expect("Error creating threads");
 
@@ -46,6 +49,11 @@ pub fn run() {
     game.response_queue = response_struct.clone();
 
     let game_state_pointer = Arc::new(Mutex::new(game));
+
+
+    // ITS AI
+    let mut big_brain = BigBrain::new(game_state_pointer.clone());
+    // GOD HELP ME
 
 
     threadpool.execute(move || {
@@ -86,6 +94,7 @@ pub fn run() {
     
     'main_loop: loop {
         std::thread::sleep(std::time::Duration::from_millis(40));
+        // let lock = game_state_pointer.lock().unwrap();
         if game_state_pointer.lock().unwrap().game_over {
             println!("Game Over");
             break 'main_loop
@@ -132,6 +141,9 @@ pub fn run() {
                 },
             }
         }
+                        
+        big_brain.ai_make_move();
+
     } 
 }
 
@@ -343,54 +355,54 @@ impl IndexMut<usize> for PieceSet {
     }
 }
 
-// fn generate_start_board() -> BoardRep {
-//     let piece_type = vec![
-//         ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
-//         PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
-//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-//         EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
-//         PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
-//         ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
-//     ];
-//     let piece_colour = vec![
-//         //why the hell is white 1 and black 0?
-//         White, White, White, White, White, White, White, White,
-//         White, White, White, White, White, White, White, White,
-//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-//         Black, Black, Black, Black, Black, Black, Black, Black,
-//         Black, Black, Black, Black, Black, Black, Black, Black];
-
-//     (piece_type, piece_colour)    
-// }
 fn generate_start_board() -> BoardRep {
     let piece_type = vec![
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, KING,  QUEEN, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, PAWN,  EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, KING,  QUEEN, EMPTY,
+        ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
+        PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
+        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+        EMPTY, EMPTY,  EMPTY,  EMPTY, EMPTY, EMPTY,  EMPTY,  EMPTY,
+        PAWN,  PAWN,   PAWN,   PAWN,  PAWN,  PAWN,   PAWN,   PAWN,
+        ROOK,  KNIGHT, BISHOP, QUEEN, KING,  BISHOP, KNIGHT, ROOK,
     ];
     let piece_colour = vec![
         //why the hell is white 1 and black 0?
-        Empty, Empty, Empty, Empty, Empty, White, White, Empty,
+        White, White, White, White, White, White, White, White,
+        White, White, White, White, White, White, White, White,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-        Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
-        Empty, Empty, Empty, White, Empty, Empty, Empty, Empty,
-        Empty, Empty, Empty, Empty, Empty, Black, Black, Empty];
+        Black, Black, Black, Black, Black, Black, Black, Black,
+        Black, Black, Black, Black, Black, Black, Black, Black];
 
     (piece_type, piece_colour)    
 }
+// fn generate_start_board() -> BoardRep {
+//     let piece_type = vec![
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, KING,  QUEEN, EMPTY,
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+//         EMPTY, EMPTY, EMPTY, PAWN,  EMPTY, EMPTY, EMPTY, EMPTY,
+//         EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, KING,  QUEEN, EMPTY,
+//     ];
+//     let piece_colour = vec![
+//         //why the hell is white 1 and black 0?
+//         Empty, Empty, Empty, Empty, Empty, White, White, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, White, Empty, Empty, Empty, Empty,
+//         Empty, Empty, Empty, Empty, Empty, Black, Black, Empty];
+
+//     (piece_type, piece_colour)    
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Coordinates {
@@ -728,6 +740,10 @@ impl Pawn {
     //pawn en passant
     pub fn en_passant(state: &mut GameState, translation: Move) -> (Option<usize>, Option<usize>, Option<usize>) {
         //because the last move was a pawn move and the vector of table states has been cleared as a result
+        // could prune impossible squares more optimally
+        if usize::from(translation.1) == 0 || usize::from(translation.1) == 63 {
+            return (None, None, None)
+        }
 
         let premove_board = bitboard_to_boardrep(&state.table_states_since_last_capture_or_pawn_move[0]);
         let destination = translation.1;
@@ -852,15 +868,15 @@ impl Pawn {
             if let Ok(input) = rx.recv() {
                 let choice: u8 = match input.to_lowercase().trim() {
                     // does not matter what it returns, but has to be a valid u8 from QUEEN ROOK BISHOP KNIGHT
-                    "reset" => return QUEEN,
                     "rook" => ROOK,
                     "knight" => KNIGHT,
                     "bishop" => BISHOP,
                     "queen" => QUEEN,
-                    _ => {
-                        println!("Invalid piecetype");
-                        0
-                    },
+                    _ => return QUEEN,
+                    // _ => {
+                    //     println!("Invalid piecetype");
+                    //     0
+                    // },
                 };
                 
                 if promotion_possibilities.contains(&choice) {
@@ -1323,7 +1339,7 @@ pub fn get_valid_moves_for_piece(board: &BoardRep) -> PlayerValidMoves {
     return total_moves_for_piece;                                                                                                                                                                                                                                                                                                                                                                                                                                   
 }
 
-pub fn make_move(board: &BoardRep, translation: Move) -> BoardRep {
+pub fn simulate_move(board: &BoardRep, translation: Move) -> BoardRep {
     let mut piece_board = board.0.clone();
     let mut colour_board = board.1.clone();
     let origin_index = usize::from(translation.0);                                                                              
@@ -1373,7 +1389,7 @@ pub fn remove_check_positions(list: MoveList, state: &mut GameState) -> MoveList
     return list
     .into_iter()
     .filter(|translation| {
-        let simulated_board = make_move(&state.board, *translation);
+        let simulated_board = simulate_move(&state.board, *translation);
         let simulated_player_moves: PlayerValidMoves = get_valid_moves_for_piece(&simulated_board);
         let old_board = state.board.clone();
         state.board = simulated_board;
@@ -1414,7 +1430,7 @@ pub fn get_legal_move_list(state: &mut GameState) {
 pub fn take_turn(state: &mut GameState, translation: Move) {
     let premove_board = state.board.clone();
     // let move_colour = state.board.1[usize::from(translation.0)];
-    state.board = make_move(&state.board, translation);
+    state.board = simulate_move(&state.board, translation);
 
     let captured_piece = premove_board.0[usize::from(translation.1)];
     let captured_colour = premove_board.1[usize::from(translation.1)];

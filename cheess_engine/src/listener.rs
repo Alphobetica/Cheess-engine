@@ -111,7 +111,6 @@ pub fn listen(user_input: Input, response: ResponsePtr, tx: Sender<String>) -> s
 					std::thread::sleep(std::time::Duration::from_millis(50));
 					let mut lock = response.lock().expect("Panic locking response queue from listener");
 					if let Some(res) = lock.res_queue.pop_front() {
-						println!("{:?}", res);
 						break 'move_loop res;
 					}
 				};
@@ -150,7 +149,6 @@ pub fn listen(user_input: Input, response: ResponsePtr, tx: Sender<String>) -> s
 				})
 			},
 			val => {
-				println!("Huh: {:?}?", val);
 				match val {
 					"queen" | "knight" | "rook" | "bishop" => {
 						if let Err(e) = tx.send(val.to_string()) {
@@ -181,7 +179,7 @@ pub fn listen(user_input: Input, response: ResponsePtr, tx: Sender<String>) -> s
       },
 		};
 		
-		println!("{:?}", res);				// TOOD: Fix this, should not be an error
+// TOOD: Fix this, should not be an error
 		// maybe (hopefully) panics
 	  let res = serde_json::to_string(&res)?;
 		// res.push('\n');
